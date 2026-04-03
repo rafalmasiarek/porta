@@ -1,0 +1,4 @@
+porta
+*.exe
+dist/
+build/
