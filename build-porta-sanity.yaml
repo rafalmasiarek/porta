@@ -1,0 +1,13 @@
+report:
+  status_labels:
+    passed: PASS
+    failed: FAIL
+
+checks:
+  - name: porta version returns tagged version-like output
+    cmd: ./dist/porta-linux-amd64 version
+    expect:
+      code: 0
+    stdout:
+      - op: contains
+        value: "v"

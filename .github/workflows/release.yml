@@ -38,18 +38,111 @@ jobs:
             go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
             -o ${{ matrix.out }} ./cmd/porta
 
-      - name: Upload release asset
+      - name: Generate checksums
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          sha256sum porta-linux-amd64 > SHA256SUMS.txt
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.out }}
+          path: ${{ matrix.out }}
+
+      - name: Upload checksum artifact
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: porta-checksums
+          path: SHA256SUMS.txt
+
+  sanity:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: porta-linux-amd64
+          path: dist
+
+      - name: Make binary executable
+        run: chmod +x dist/porta-linux-amd64
+
+      - name: Install sanityctl
+        run: |
+          set -euo pipefail
+          asset="sanityctl-linux-amd64"
+          base="https://github.com/rafalmasiarek/py-sanityctl/releases/download/latest"
+
+          curl -fsSL -o /tmp/"$asset" "$base/$asset"
+          curl -fsSL -o /tmp/SHA256SUMS.txt "$base/SHA256SUMS.txt"
+          (
+            cd /tmp
+            grep " $asset\$" SHA256SUMS.txt | sha256sum -c -
+          )
+          install -m 0755 /tmp/"$asset" /usr/local/bin/sanityctl
+          sanityctl --help
+
+      - name: Run sanity checks
+        run: |
+          set -euo pipefail
+          sanityctl run \
+            -f build-porta-sanity.yaml \
+            --summary table \
+            --output json > sanityctl-report.json
+
+      - name: Upload sanity report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanityctl-report
+          path: sanityctl-report.json
+
+  release:
+    needs: [build, sanity]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: porta-linux-amd64
+          path: release
+
+      - name: Download darwin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: porta-darwin-amd64
+          path: release
+
+      - name: Download windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: porta-windows-amd64.exe
+          path: release
+
+      - name: Download sanity report artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sanityctl-report
+          path: release
+
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            porta-linux-amd64
-            porta-darwin-amd64
-            porta-windows-amd64.exe
+            release/porta-linux-amd64
+            release/porta-darwin-amd64
+            release/porta-windows-amd64.exe
+            release/sanityctl-report.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   update_homebrew_formula:
-    needs: build
+    needs: release
     runs-on: ubuntu-latest
 
     steps:
