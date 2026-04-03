@@ -1,0 +1,42 @@
+version: 1
+autorun: true
+
+storage:
+  endpoint: ${DESTINATION_ENDPOINT}
+  region: ${DESTINATION_REGION}
+  access_key_id: ${DESTINATION_ACCESS_KEY_ID}
+  secret_access_key: ${DESTINATION_SECRET_ACCESS_KEY}
+  bucket: ${DESTINATION_BUCKET}
+  prefix: ${DESTINATION_PREFIX}
+  path_style: true
+
+backup:
+  source: .
+  interval: 12h
+  chunk_size_mb: 20
+  retention_local: 3
+  broken_cleanup_after: 24h
+  include: []
+  exclude:
+    - .porta/**
+    - .git/**
+    - .porta.enc
+    - config.enc
+    - .DS_Store
+    - ._*
+    - .Spotlight-V100/**
+    - .Trashes/**
+    - .fseventsd/**
+
+hooks:
+  on_attach:
+    - "bash scripts/on-attach.sh"
+  on_detach:
+    - "bash scripts/on-detach.sh"
+
+jobs:
+  - name: ansible-bootstrap
+    command: "ansible-playbook playbooks/site.yml -i inventory"
+    mode: background
+    run_on: attach
+    log_file: .porta/logs/ansible.log

@@ -1,0 +1,101 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            out: porta-linux-amd64
+          - goos: darwin
+            goarch: amd64
+            out: porta-darwin-amd64
+          - goos: windows
+            goarch: amd64
+            out: porta-windows-amd64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Build binary
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+            -o ${{ matrix.out }} ./cmd/porta
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            porta-linux-amd64
+            porta-darwin-amd64
+            porta-windows-amd64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update_homebrew_formula:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download Darwin release asset
+        run: |
+          curl -L \
+            -o porta-darwin-amd64 \
+            "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/porta-darwin-amd64"
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          SHA=$(sha256sum porta-darwin-amd64 | awk '{print $1}')
+          echo "sha256=${SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Update Homebrew formula
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          SHA="${{ steps.sha.outputs.sha256 }}"
+
+          mkdir -p Homebrew-Formula
+
+          cat > Homebrew-Formula/porta.rb <<EOF
+          class Porta < Formula
+            desc "Portable automation runtime with USB triggers, hooks, and offline-first execution"
+            homepage "https://github.com/${{ github.repository }}"
+            url "https://github.com/${{ github.repository }}/releases/download/${TAG}/porta-darwin-amd64"
+            sha256 "${SHA}"
+            version "${VERSION}"
+
+            def install
+              bin.install "porta-darwin-amd64" => "porta"
+            end
+          end
+          EOF
+
+      - name: Commit updated formula
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add Homebrew-Formula/porta.rb
+          git diff --cached --quiet || git commit -m "Update Homebrew formula for ${GITHUB_REF_NAME}"
+          git push
