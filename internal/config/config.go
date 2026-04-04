@@ -238,11 +238,6 @@ func Load(configPath string, runtime map[string]string) (*Config, string, error)
                     continue
                 }
 
-<<<<<<< HEAD
-=======
-                // Structured hook item:
-                // - command: "..."
->>>>>>> 21f63b4ce056375a6e87f001511e2cec81bba33d
                 hook := Hook{
                     OS:    "all",
                     Debug: false,
