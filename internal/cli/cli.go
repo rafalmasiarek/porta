@@ -136,15 +136,13 @@ func runCmd(args []string) error {
     }
 
     switch *phase {
-
     case "attach":
-
         for _, hook := range cfg.Hooks.OnAttach {
             if !agent.JobMatchesOS(hook.OS) {
                 continue
             }
 
-            if err := process.Run(hook.Command, env, root); err != nil {
+            if err := process.Run(hook.Command, env, root, hook.Debug); err != nil {
                 return err
             }
         }
@@ -158,15 +156,23 @@ func runCmd(args []string) error {
                 continue
             }
 
+            jobWD := job.WorkingDir
+            if jobWD == "" {
+                jobWD = root
+            }
+
             if job.Mode == "background" {
-                process.StartBackground(job.Command, env, root, job.LogFile)
+                if err := process.StartBackground(job.Command, env, jobWD, job.LogFile, job.Debug); err != nil {
+                    return err
+                }
             } else {
-                process.Run(job.Command, env, root)
+                if err := process.Run(job.Command, env, jobWD, job.Debug); err != nil {
+                    return err
+                }
             }
         }
 
     case "detach":
-
         for _, job := range cfg.Jobs {
             if !agent.JobMatchesOS(job.OS) {
                 continue
@@ -176,10 +182,19 @@ func runCmd(args []string) error {
                 continue
             }
 
+            jobWD := job.WorkingDir
+            if jobWD == "" {
+                jobWD = root
+            }
+
             if job.Mode == "background" {
-                process.StartBackground(job.Command, env, root, job.LogFile)
+                if err := process.StartBackground(job.Command, env, jobWD, job.LogFile, job.Debug); err != nil {
+                    return err
+                }
             } else {
-                process.Run(job.Command, env, root)
+                if err := process.Run(job.Command, env, jobWD, job.Debug); err != nil {
+                    return err
+                }
             }
         }
 
@@ -188,7 +203,7 @@ func runCmd(args []string) error {
                 continue
             }
 
-            if err := process.Run(hook.Command, env, root); err != nil {
+            if err := process.Run(hook.Command, env, root, hook.Debug); err != nil {
                 return err
             }
         }
@@ -214,7 +229,6 @@ func backupCmd(args []string) error {
     ctx := context.Background()
 
     switch args[0] {
-
     case "create":
         _, err := svc.Create(ctx, "")
         return err
@@ -231,7 +245,6 @@ func backupCmd(args []string) error {
         for _, m := range list {
             fmt.Println(m.BackupID, m.CreatedAt)
         }
-
     }
 
     return nil

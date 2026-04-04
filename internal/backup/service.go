@@ -12,8 +12,8 @@ import (
 
     "github.com/rafalmasiarek/porta/internal/archive"
     "github.com/rafalmasiarek/porta/internal/config"
-    "github.com/rafalmasiarek/porta/internal/s3util"
     "github.com/rafalmasiarek/porta/internal/logx"
+    "github.com/rafalmasiarek/porta/internal/s3util"
 )
 
 type StateStatus string
@@ -71,18 +71,20 @@ func New(cfg *config.Config, root string) (*Service, error) {
     if err != nil {
         return nil, err
     }
+
     scope := Scope{
-        Name: "default",
-        Source: cfg.Backup.Source,
+        Name:           "default",
+        Source:         cfg.Backup.Source,
         ChunkSizeBytes: int64(cfg.Backup.ChunkSizeMB) * 1024 * 1024,
-        Include: append([]string{}, cfg.Backup.Include...),
-        Exclude: append([]string{}, cfg.Backup.Exclude...),
+        Include:        append([]string{}, cfg.Backup.Include...),
+        Exclude:        append([]string{}, cfg.Backup.Exclude...),
     }
+
     return &Service{
-        Cfg: cfg,
-        Root: root,
-        Scope: scope,
-        Storage: storage,
+        Cfg:       cfg,
+        Root:      root,
+        Scope:     scope,
+        Storage:   storage,
         SpoolRoot: filepath.Join(root, ".porta", "spool", scope.Name),
     }, nil
 }
@@ -90,6 +92,7 @@ func New(cfg *config.Config, root string) (*Service, error) {
 func (s *Service) remoteRoot() string {
     return s.Storage.Join("backups", s.Scope.Name)
 }
+
 func (s *Service) remoteKey(backupID, name string) string {
     return s.Storage.Join("backups", s.Scope.Name, backupID, name)
 }
@@ -98,6 +101,7 @@ func (s *Service) Create(ctx context.Context, backupID string) (string, error) {
     if backupID == "" {
         backupID = time.Now().UTC().Format("2006-01-02T15-04-05Z")
     }
+
     jobDir := filepath.Join(s.SpoolRoot, backupID)
     if err := os.MkdirAll(jobDir, 0o755); err != nil {
         return "", err
@@ -106,9 +110,9 @@ func (s *Service) Create(ctx context.Context, backupID string) (string, error) {
     st, _ := s.loadState(jobDir)
     if st.BackupID == "" {
         st = State{
-            BackupID: backupID,
-            Scope: s.Scope.Name,
-            Status: StatusPacking,
+            BackupID:  backupID,
+            Scope:     s.Scope.Name,
+            Status:    StatusPacking,
             CreatedAt: time.Now().UTC(),
             UpdatedAt: time.Now().UTC(),
         }
@@ -132,6 +136,7 @@ func (s *Service) Create(ctx context.Context, backupID string) (string, error) {
         if _, err := os.Stat(packPath); err == nil {
             continue
         }
+
         logx.Info("porta", "creating pack %s", pack.Name)
         if err := archive.CreatePack(s.Scope.Source, pack, packPath); err != nil {
             st.Status = StatusBroken
@@ -150,6 +155,7 @@ func (s *Service) Create(ctx context.Context, backupID string) (string, error) {
     }
 
     logx.Info("porta", "local backup prepared %s", jobDir)
+
     if s.RemoteAvailable(ctx) {
         if err := s.SyncOne(ctx, backupID); err != nil {
             return backupID, nil
@@ -187,18 +193,22 @@ func (s *Service) SyncAll(ctx context.Context) error {
             continue
         }
     }
+
     if len(errs) > 0 {
         return fmt.Errorf(strings.Join(errs, "; "))
     }
+
     return nil
 }
 
 func (s *Service) SyncOne(ctx context.Context, backupID string) error {
     jobDir := filepath.Join(s.SpoolRoot, backupID)
+
     st, err := s.loadState(jobDir)
     if err != nil {
         return s.handleBrokenDirectory(jobDir, backupID, err)
     }
+
     manifestBytes, err := os.ReadFile(filepath.Join(jobDir, "manifest.draft.json"))
     if err != nil {
         return s.handleBrokenDirectory(jobDir, backupID, err)
@@ -215,6 +225,7 @@ func (s *Service) SyncOne(ctx context.Context, backupID string) error {
 
     for _, pack := range m.Packs {
         key := s.remoteKey(backupID, pack.Name)
+
         exists, err := s.Storage.Exists(ctx, key)
         if err != nil {
             st.Status = StatusReady
@@ -226,6 +237,7 @@ func (s *Service) SyncOne(ctx context.Context, backupID string) error {
         if exists {
             continue
         }
+
         local := filepath.Join(jobDir, pack.Name)
         if _, err := os.Stat(local); err != nil {
             st.Status = StatusBroken
@@ -234,8 +246,11 @@ func (s *Service) SyncOne(ctx context.Context, backupID string) error {
             _ = s.saveState(jobDir, st)
             return fmt.Errorf("missing pack %s", pack.Name)
         }
+
         logx.Info("porta", "uploading %s", pack.Name)
-        if err := s3util.Retry(ctx, 3, func() error { return s.Storage.UploadFile(ctx, local, key) }); err != nil {
+        if err := s3util.Retry(ctx, 3, func() error {
+            return s.Storage.UploadFile(ctx, local, key)
+        }); err != nil {
             st.Status = StatusReady
             st.LastError = err.Error()
             st.UpdatedAt = time.Now().UTC()
@@ -249,6 +264,7 @@ func (s *Service) SyncOne(ctx context.Context, backupID string) error {
     if err != nil {
         return err
     }
+
     if err := s3util.Retry(ctx, 3, func() error {
         return s.Storage.UploadBytes(ctx, manifestBytes, s.remoteKey(backupID, "manifest.json"), "application/json")
     }); err != nil {
@@ -269,6 +285,7 @@ func (s *Service) SyncOne(ctx context.Context, backupID string) error {
     if err := os.RemoveAll(jobDir); err != nil {
         return err
     }
+
     logx.Info("porta", "backup synced %s", backupID)
     return nil
 }
@@ -278,22 +295,26 @@ func (s *Service) List(ctx context.Context) ([]Manifest, error) {
     if err != nil {
         return nil, err
     }
+
     list := make([]Manifest, 0)
     for _, obj := range objs {
         if !strings.HasSuffix(obj.Key, "/manifest.json") {
             continue
         }
+
         b, err := s.Storage.ReadAll(ctx, obj.Key)
         if err != nil {
             return nil, err
         }
+
         var m Manifest
         if err := json.Unmarshal(b, &m); err != nil {
             return nil, err
         }
         list = append(list, m)
     }
-    sort.Slice(list, func(i,j int) bool { return list[i].CreatedAt.After(list[j].CreatedAt) })
+
+    sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt.After(list[j].CreatedAt) })
     return list, nil
 }
 
@@ -303,18 +324,23 @@ func (s *Service) Restore(ctx context.Context, backupID, destDir, fileFilter str
         return err
     }
 
+    normalizedFilter := normalizeArchivePath(fileFilter)
+
     wanted := map[string]bool{}
-    if fileFilter != "" {
-        wanted[fileFilter] = true
+    if normalizedFilter != "" {
+        wanted[normalizedFilter] = true
     }
+
     cacheDir := filepath.Join(s.Root, ".porta", "restore-cache", s.Scope.Name, m.BackupID)
     if err := os.MkdirAll(cacheDir, 0o755); err != nil {
         return err
     }
+
     for _, pack := range m.Packs {
-        if fileFilter != "" && !packContainsFile(pack, fileFilter) {
+        if normalizedFilter != "" && !packContainsFile(pack, normalizedFilter) {
             continue
         }
+
         localPack := filepath.Join(cacheDir, pack.Name)
         if _, err := os.Stat(localPack); err != nil {
             logx.Info("porta", "downloading %s", pack.Name)
@@ -322,11 +348,13 @@ func (s *Service) Restore(ctx context.Context, backupID, destDir, fileFilter str
                 return err
             }
         }
+
         logx.Info("porta", "extracting %s", pack.Name)
         if err := archive.ExtractPack(localPack, destDir, wanted); err != nil {
             return err
         }
     }
+
     logx.Info("porta", "restore complete %s", m.BackupID)
     return nil
 }
@@ -344,26 +372,32 @@ func (s *Service) lastSuccessfulTime() (time.Time, error) {
     if err == nil && len(manifests) > 0 {
         return manifests[0].CreatedAt, nil
     }
+
     entries, err := os.ReadDir(s.SpoolRoot)
     if err != nil {
         return time.Time{}, err
     }
+
     latest := time.Time{}
     for _, e := range entries {
         if !e.IsDir() {
             continue
         }
+
         st, err := s.loadState(filepath.Join(s.SpoolRoot, e.Name()))
         if err != nil {
             continue
         }
+
         if st.Status == StatusComplete && st.CompletedAt != nil && st.CompletedAt.After(latest) {
             latest = *st.CompletedAt
         }
     }
+
     if latest.IsZero() {
         return time.Time{}, fmt.Errorf("no successful backup found")
     }
+
     return latest, nil
 }
 
@@ -372,18 +406,22 @@ func (s *Service) ReconcileSpool(now time.Time) {
     if err != nil {
         return
     }
+
     for _, e := range entries {
         if !e.IsDir() {
             continue
         }
+
         jobDir := filepath.Join(s.SpoolRoot, e.Name())
         _, stateErr := os.Stat(filepath.Join(jobDir, "state.json"))
         _, manifestErr := os.Stat(filepath.Join(jobDir, "manifest.draft.json"))
+
         if stateErr != nil && manifestErr != nil {
             logx.Info("porta", "removing broken backup directory %s", e.Name())
             _ = os.RemoveAll(jobDir)
             continue
         }
+
         st, err := s.loadState(jobDir)
         if err != nil {
             if s.isOlderThan(jobDir, now, s.Cfg.Backup.BrokenAfter) {
@@ -392,17 +430,20 @@ func (s *Service) ReconcileSpool(now time.Time) {
             }
             continue
         }
+
         if manifestErr != nil {
             st.Status = StatusBroken
             st.LastError = "missing manifest.draft.json"
             st.UpdatedAt = time.Now().UTC()
             _ = s.saveState(jobDir, st)
         }
+
         if st.Status == StatusBroken && s.isOlderThan(jobDir, now, s.Cfg.Backup.BrokenAfter) {
             logx.Info("porta", "cleaning old broken backup %s", e.Name())
             _ = os.RemoveAll(jobDir)
         }
     }
+
     s.enforceRetention()
 }
 
@@ -410,19 +451,23 @@ func (s *Service) enforceRetention() {
     if s.Cfg.Backup.RetentionLocal <= 0 {
         return
     }
+
     entries, err := os.ReadDir(s.SpoolRoot)
     if err != nil {
         return
     }
+
     type item struct {
         name string
-        t time.Time
+        t    time.Time
     }
+
     items := make([]item, 0)
     for _, e := range entries {
         if !e.IsDir() {
             continue
         }
+
         st, err := s.loadState(filepath.Join(s.SpoolRoot, e.Name()))
         if err != nil {
             continue
@@ -430,9 +475,11 @@ func (s *Service) enforceRetention() {
         if st.Status == StatusBroken {
             continue
         }
+
         items = append(items, item{name: e.Name(), t: st.CreatedAt})
     }
-    sort.Slice(items, func(i,j int) bool { return items[i].t.After(items[j].t) })
+
+    sort.Slice(items, func(i, j int) bool { return items[i].t.After(items[j].t) })
     for i := s.Cfg.Backup.RetentionLocal; i < len(items); i++ {
         _ = os.RemoveAll(filepath.Join(s.SpoolRoot, items[i].name))
     }
@@ -445,6 +492,7 @@ func (s *Service) handleBrokenDirectory(jobDir, backupID string, cause error) er
         st.Scope = s.Scope.Name
         st.CreatedAt = time.Now().UTC()
     }
+
     st.Status = StatusBroken
     st.LastError = cause.Error()
     st.UpdatedAt = time.Now().UTC()
@@ -457,6 +505,7 @@ func (s *Service) isOlderThan(jobDir string, now time.Time, spec config.Interval
     if err != nil {
         return false
     }
+
     threshold := spec.NextFrom(st.ModTime().UTC())
     return !now.Before(threshold)
 }
@@ -470,17 +519,21 @@ func (s *Service) fetchManifest(ctx context.Context, backupID string) (*Manifest
         if len(list) == 0 {
             return nil, fmt.Errorf("no backups found")
         }
+
         m := list[0]
         return &m, nil
     }
+
     b, err := s.Storage.ReadAll(ctx, s.remoteKey(backupID, "manifest.json"))
     if err != nil {
         return nil, err
     }
+
     var m Manifest
     if err := json.Unmarshal(b, &m); err != nil {
         return nil, err
     }
+
     return &m, nil
 }
 
@@ -497,20 +550,22 @@ func (s *Service) loadOrCreateManifest(path, backupID string) (*Manifest, error)
     if err != nil {
         return nil, err
     }
+
     packs := archive.BuildPacks(files, s.Scope.ChunkSizeBytes)
     m := &Manifest{
-        Version: 1,
-        Scope: s.Scope.Name,
-        Source: s.Scope.Source,
-        BackupID: backupID,
-        CreatedAt: time.Now().UTC(),
+        Version:        1,
+        Scope:          s.Scope.Name,
+        Source:         s.Scope.Source,
+        BackupID:       backupID,
+        CreatedAt:      time.Now().UTC(),
         ChunkSizeBytes: s.Scope.ChunkSizeBytes,
-        Include: append([]string{}, s.Scope.Include...),
-        Exclude: append([]string{}, s.Scope.Exclude...),
-        Files: files,
-        Packs: packs,
-        Status: string(StatusReady),
+        Include:        append([]string{}, s.Scope.Include...),
+        Exclude:        append([]string{}, s.Scope.Exclude...),
+        Files:          files,
+        Packs:          packs,
+        Status:         string(StatusReady),
     }
+
     return m, s.saveManifest(path, m)
 }
 
@@ -519,11 +574,7 @@ func (s *Service) saveManifest(path string, m *Manifest) error {
     if err != nil {
         return err
     }
-    tmp := path + ".tmp"
-    if err := os.WriteFile(tmp, b, 0o644); err != nil {
-        return err
-    }
-    return os.Rename(tmp, path)
+    return writeFileAtomic(path, b, 0o644)
 }
 
 func (s *Service) loadState(jobDir string) (State, error) {
@@ -531,10 +582,12 @@ func (s *Service) loadState(jobDir string) (State, error) {
     if err != nil {
         return State{}, err
     }
+
     var st State
     if err := json.Unmarshal(b, &st); err != nil {
         return State{}, err
     }
+
     return st, nil
 }
 
@@ -543,11 +596,7 @@ func (s *Service) saveState(jobDir string, st State) error {
     if err != nil {
         return err
     }
-    tmp := filepath.Join(jobDir, "state.json.tmp")
-    if err := os.WriteFile(tmp, b, 0o644); err != nil {
-        return err
-    }
-    return os.Rename(tmp, filepath.Join(jobDir, "state.json"))
+    return writeFileAtomic(filepath.Join(jobDir, "state.json"), b, 0o644)
 }
 
 func (s *Service) RemoteAvailable(ctx context.Context) bool {
@@ -556,10 +605,45 @@ func (s *Service) RemoteAvailable(ctx context.Context) bool {
 }
 
 func packContainsFile(pack archive.Pack, file string) bool {
+    want := normalizeArchivePath(file)
     for _, f := range pack.Files {
-        if f.Path == file {
+        if normalizeArchivePath(f.Path) == want {
             return true
         }
     }
     return false
+}
+
+func normalizeArchivePath(p string) string {
+    p = strings.TrimSpace(p)
+    if p == "" {
+        return ""
+    }
+    p = filepath.Clean(p)
+    p = filepath.ToSlash(p)
+    p = strings.TrimPrefix(p, "./")
+    if p == "." {
+        return ""
+    }
+    return p
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+    tmp := path + ".tmp"
+
+    if err := os.WriteFile(tmp, data, perm); err != nil {
+        return err
+    }
+
+    if err := os.Rename(tmp, path); err == nil {
+        return nil
+    }
+
+    _ = os.Remove(path)
+    if err := os.Rename(tmp, path); err != nil {
+        _ = os.Remove(tmp)
+        return err
+    }
+
+    return nil
 }
