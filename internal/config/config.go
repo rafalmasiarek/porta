@@ -48,6 +48,7 @@ type Backup struct {
 type Hook struct {
     Command string
     OS      string
+    Debug   bool
 }
 
 type Hooks struct {
@@ -63,6 +64,7 @@ type Job struct {
     LogFile    string
     WorkingDir string
     OS         string
+    Debug      bool
 }
 
 type IntervalSpec struct {
@@ -222,6 +224,7 @@ func Load(configPath string, runtime map[string]string) (*Config, string, error)
                     hook := Hook{
                         Command: interpolate(unquote(val), runtime),
                         OS:      "all",
+                        Debug:   false,
                     }
 
                     switch sub {
@@ -239,7 +242,10 @@ func Load(configPath string, runtime map[string]string) (*Config, string, error)
 
                 // Structured hook item:
                 // - command: "..."
-                hook := Hook{OS: "all"}
+                hook := Hook{
+                    OS:    "all",
+                    Debug: false,
+                }
 
                 switch sub {
                 case "on_attach":
@@ -276,6 +282,7 @@ func Load(configPath string, runtime map[string]string) (*Config, string, error)
                     Mode:  "foreground",
                     RunOn: "attach",
                     OS:    "all",
+                    Debug: false,
                 })
                 currentJob = &cfg.Jobs[len(cfg.Jobs)-1]
 
@@ -338,6 +345,7 @@ func Load(configPath string, runtime map[string]string) (*Config, string, error)
         if cfg.Jobs[i].OS == "" {
             cfg.Jobs[i].OS = "all"
         }
+        cfg.Jobs[i].Command = interpolate(cfg.Jobs[i].Command, runtime)
     }
 
     for i := range cfg.Hooks.OnAttach {
@@ -474,6 +482,8 @@ func applyHook(h *Hook, key, val string) {
         h.Command = val
     case "os":
         h.OS = val
+    case "debug":
+        h.Debug = parseBool(val)
     }
 }
 
@@ -495,6 +505,8 @@ func applyJob(j *Job, key, val string) {
         j.WorkingDir = val
     case "os":
         j.OS = val
+    case "debug":
+        j.Debug = parseBool(val)
     }
 }
 

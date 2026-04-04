@@ -143,7 +143,7 @@ func (a *Agent) debounce(root string) bool {
 func buildSnapshot(configPath string) (*Snapshot, error) {
     root := filepath.Dir(configPath)
 
-    runtime, err := envruntime.Load(root, crypto.DefaultPrivateKeyPath())
+    runtimeEnv, err := envruntime.Load(root, crypto.DefaultPrivateKeyPath())
     if err != nil {
         return nil, err
     }
@@ -152,7 +152,7 @@ func buildSnapshot(configPath string) (*Snapshot, error) {
     var cfgRoot string
 
     for i := 0; i < 5; i++ {
-        cfg, cfgRoot, err = config.Load(configPath, runtime)
+        cfg, cfgRoot, err = config.Load(configPath, runtimeEnv)
         if err == nil {
             break
         }
@@ -163,7 +163,7 @@ func buildSnapshot(configPath string) (*Snapshot, error) {
         return nil, err
     }
 
-    env := envruntime.Merge(runtime)
+    env := envruntime.Merge(runtimeEnv)
 
     sig, err := signature(root, configPath)
     if err != nil {
@@ -204,7 +204,7 @@ func (a *Agent) runAttach(ctx context.Context, snap *Snapshot) {
             continue
         }
 
-        if err := process.Run(hook.Command, snap.Env, wd); err != nil {
+        if err := process.Run(hook.Command, snap.Env, wd, hook.Debug); err != nil {
             logx.Info("porta-agent", "attach hook error: %v", err)
         }
     }
@@ -218,12 +218,17 @@ func (a *Agent) runAttach(ctx context.Context, snap *Snapshot) {
             continue
         }
 
+        jobWD := job.WorkingDir
+        if jobWD == "" {
+            jobWD = wd
+        }
+
         if job.Mode == "background" {
-            if err := process.StartBackground(job.Command, snap.Env, wd, job.LogFile); err != nil {
+            if err := process.StartBackground(job.Command, snap.Env, jobWD, job.LogFile, job.Debug); err != nil {
                 logx.Info("porta-agent", "background job error: %v", err)
             }
         } else {
-            if err := process.Run(job.Command, snap.Env, wd); err != nil {
+            if err := process.Run(job.Command, snap.Env, jobWD, job.Debug); err != nil {
                 logx.Info("porta-agent", "foreground job error: %v", err)
             }
         }
@@ -253,12 +258,17 @@ func (a *Agent) runDetach(snap *Snapshot) {
             continue
         }
 
+        jobWD := job.WorkingDir
+        if jobWD == "" {
+            jobWD = wd
+        }
+
         if job.Mode == "background" {
-            if err := process.StartBackground(job.Command, snap.Env, wd, job.LogFile); err != nil {
+            if err := process.StartBackground(job.Command, snap.Env, jobWD, job.LogFile, job.Debug); err != nil {
                 logx.Info("porta-agent", "background detach job error: %v", err)
             }
         } else {
-            if err := process.Run(job.Command, snap.Env, wd); err != nil {
+            if err := process.Run(job.Command, snap.Env, jobWD, job.Debug); err != nil {
                 logx.Info("porta-agent", "foreground detach job error: %v", err)
             }
         }
@@ -269,7 +279,7 @@ func (a *Agent) runDetach(snap *Snapshot) {
             continue
         }
 
-        if err := process.Run(hook.Command, snap.Env, wd); err != nil {
+        if err := process.Run(hook.Command, snap.Env, wd, hook.Debug); err != nil {
             logx.Info("porta-agent", "detach hook error: %v", err)
         }
     }
