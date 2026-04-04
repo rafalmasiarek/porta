@@ -7,7 +7,6 @@ import (
     "fmt"
     "os"
     "path/filepath"
-    "strings"
     "time"
 
     "github.com/rafalmasiarek/porta/internal/agent"
@@ -48,27 +47,27 @@ func printHelp() {
   porta version
   porta status [--config porta.yml]
   porta run [--phase attach|detach] [--config porta.yml]
-  porta backup create [--config porta.yml] [--backup-id ID]
-  porta backup sync [--config porta.yml] [--backup-id ID]
+  porta backup create [--config porta.yml]
+  porta backup sync [--config porta.yml]
   porta backup list [--config porta.yml]
-  porta backup restore [--config porta.yml] [--backup-id latest|ID] [--dest DIR] [--file PATH]
-  porta secrets encrypt --in FILE --pub FILE [--out FILE]
-  porta secrets decrypt --in FILE [--key FILE] [--out FILE]
-  porta agent start
-  porta agent render --platform linux|macos|windows`)
+  porta backup restore [--config porta.yml]
+  porta agent start`)
 }
 
 func loadConfigWithRuntime(configPath string) (*config.Config, string, []string, error) {
     resolvedPath := configPath
+
     if resolvedPath == "" {
         cwd, err := os.Getwd()
         if err != nil {
             return nil, "", nil, err
         }
+
         found, err := config.FindConfig(cwd)
         if err != nil {
             return nil, "", nil, err
         }
+
         resolvedPath = found
     }
 
@@ -89,7 +88,8 @@ func loadConfigWithRuntime(configPath string) (*config.Config, string, []string,
 
 func statusCmd(args []string) error {
     fs := flag.NewFlagSet("status", flag.ContinueOnError)
-    configPath := fs.String("config", "", "Path to porta.yml")
+    configPath := fs.String("config", "", "")
+
     if err := fs.Parse(args); err != nil {
         return err
     }
@@ -106,123 +106,89 @@ func statusCmd(args []string) error {
 
     svc.ReconcileSpool(time.Now().UTC())
 
-    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
-    storageReachable := svc.RemoteAvailable(ctx)
-    backupDue, err := svc.ShouldCreateNewBackup(time.Now().UTC())
-    if err != nil {
-        return err
-    }
-
     result := map[string]any{
-        "storage_reachable": storageReachable,
-        "backup_due":        backupDue,
-        "spool_root":        svc.SpoolRoot,
+        "storage_reachable": svc.RemoteAvailable(ctx),
+        "spool":             svc.SpoolRoot,
         "source":            cfg.Backup.Source,
-        "interval":          cfg.Backup.Interval,
     }
 
-    b, err := json.MarshalIndent(result, "", "  ")
-    if err != nil {
-        return err
-    }
-
+    b, _ := json.MarshalIndent(result, "", "  ")
     fmt.Println(string(b))
+
     return nil
 }
 
 func runCmd(args []string) error {
     fs := flag.NewFlagSet("run", flag.ContinueOnError)
-    configPath := fs.String("config", "", "Path to porta.yml")
-    phase := fs.String("phase", "attach", "attach or detach")
+    configPath := fs.String("config", "", "")
+    phase := fs.String("phase", "attach", "")
 
     if err := fs.Parse(args); err != nil {
         return err
     }
 
-    cfg, root, mergedEnv, err := loadConfigWithRuntime(*configPath)
+    cfg, root, env, err := loadConfigWithRuntime(*configPath)
     if err != nil {
         return err
     }
 
-    mergedEnv = append(mergedEnv,
-        "PORTA_ROOT="+root,
-        "PORTA_PHASE="+*phase,
-    )
-
     switch *phase {
 
     case "attach":
-        for _, command := range cfg.Hooks.OnAttach {
-            if err := process.Run(command, mergedEnv, root); err != nil {
+
+        for _, hook := range cfg.Hooks.OnAttach {
+            if !agent.JobMatchesOS(hook.OS) {
+                continue
+            }
+
+            if err := process.Run(hook.Command, env, root); err != nil {
                 return err
             }
         }
 
         for _, job := range cfg.Jobs {
+            if !agent.JobMatchesOS(job.OS) {
+                continue
+            }
+
             if job.RunOn != "" && job.RunOn != "attach" {
                 continue
             }
 
-            if strings.EqualFold(job.Mode, "background") {
-                if err := process.StartBackground(job.Command, mergedEnv, job.WorkingDir, job.LogFile); err != nil {
-                    return err
-                }
+            if job.Mode == "background" {
+                process.StartBackground(job.Command, env, root, job.LogFile)
             } else {
-                if err := process.Run(job.Command, mergedEnv, job.WorkingDir); err != nil {
-                    return err
-                }
+                process.Run(job.Command, env, root)
             }
         }
 
-        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-        defer cancel()
-
-        svc, err := backup.New(cfg, root)
-        if err != nil {
-            return err
-        }
-
-        svc.ReconcileSpool(time.Now().UTC())
-
-        if err := svc.SyncAll(ctx); err != nil {
-            fmt.Println("[porta] backup sync completed with recoverable errors:", err)
-        }
-
     case "detach":
-        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-        defer cancel()
-
-        svc, err := backup.New(cfg, root)
-        if err != nil {
-            return err
-        }
-
-        svc.ReconcileSpool(time.Now().UTC())
-
-        if err := svc.SyncAll(ctx); err != nil {
-            fmt.Println("[porta] backup sync completed with recoverable errors:", err)
-        }
 
         for _, job := range cfg.Jobs {
+            if !agent.JobMatchesOS(job.OS) {
+                continue
+            }
+
             if job.RunOn != "detach" {
                 continue
             }
 
-            if strings.EqualFold(job.Mode, "background") {
-                if err := process.StartBackground(job.Command, mergedEnv, "/", job.LogFile); err != nil {
-                    return err
-                }
+            if job.Mode == "background" {
+                process.StartBackground(job.Command, env, root, job.LogFile)
             } else {
-                if err := process.Run(job.Command, mergedEnv, "/"); err != nil {
-                    return err
-                }
+                process.Run(job.Command, env, root)
             }
         }
 
-        for _, command := range cfg.Hooks.OnDetach {
-            if err := process.Run(command, mergedEnv, "/"); err != nil {
+        for _, hook := range cfg.Hooks.OnDetach {
+            if !agent.JobMatchesOS(hook.OS) {
+                continue
+            }
+
+            if err := process.Run(hook.Command, env, root); err != nil {
                 return err
             }
         }
@@ -235,254 +201,46 @@ func runCmd(args []string) error {
 }
 
 func backupCmd(args []string) error {
-    if len(args) == 0 {
-        return fmt.Errorf("backup subcommand required")
+    cfg, root, _, err := loadConfigWithRuntime("")
+    if err != nil {
+        return err
     }
+
+    svc, err := backup.New(cfg, root)
+    if err != nil {
+        return err
+    }
+
+    ctx := context.Background()
 
     switch args[0] {
 
     case "create":
-        fs := flag.NewFlagSet("backup create", flag.ContinueOnError)
-        configPath := fs.String("config", "", "Path to porta.yml")
-        backupID := fs.String("backup-id", "", "Backup ID")
-
-        if err := fs.Parse(args[1:]); err != nil {
-            return err
-        }
-
-        cfg, root, _, err := loadConfigWithRuntime(*configPath)
-        if err != nil {
-            return err
-        }
-
-        svc, err := backup.New(cfg, root)
-        if err != nil {
-            return err
-        }
-
-        ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-        defer cancel()
-
-        id, err := svc.Create(ctx, *backupID)
-        if err != nil {
-            return err
-        }
-
-        fmt.Println("[porta] backup created", id)
-        return nil
+        _, err := svc.Create(ctx, "")
+        return err
 
     case "sync":
-        fs := flag.NewFlagSet("backup sync", flag.ContinueOnError)
-        configPath := fs.String("config", "", "Path to porta.yml")
-        backupID := fs.String("backup-id", "", "Backup ID")
-
-        if err := fs.Parse(args[1:]); err != nil {
-            return err
-        }
-
-        cfg, root, _, err := loadConfigWithRuntime(*configPath)
-        if err != nil {
-            return err
-        }
-
-        svc, err := backup.New(cfg, root)
-        if err != nil {
-            return err
-        }
-
-        svc.ReconcileSpool(time.Now().UTC())
-
-        ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-        defer cancel()
-
-        if *backupID != "" {
-            return svc.SyncOne(ctx, *backupID)
-        }
-
         return svc.SyncAll(ctx)
 
     case "list":
-        fs := flag.NewFlagSet("backup list", flag.ContinueOnError)
-        configPath := fs.String("config", "", "Path to porta.yml")
-
-        if err := fs.Parse(args[1:]); err != nil {
-            return err
-        }
-
-        cfg, root, _, err := loadConfigWithRuntime(*configPath)
-        if err != nil {
-            return err
-        }
-
-        svc, err := backup.New(cfg, root)
-        if err != nil {
-            return err
-        }
-
-        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-        defer cancel()
-
         list, err := svc.List(ctx)
         if err != nil {
             return err
         }
 
         for _, m := range list {
-            fmt.Printf("%s\t%s\t%d packs\t%s\n",
-                m.BackupID,
-                m.CreatedAt.Format(time.RFC3339),
-                len(m.Packs),
-                m.Status,
-            )
+            fmt.Println(m.BackupID, m.CreatedAt)
         }
 
-        return nil
-
-    case "restore":
-        fs := flag.NewFlagSet("backup restore", flag.ContinueOnError)
-        configPath := fs.String("config", "", "Path to porta.yml")
-        backupID := fs.String("backup-id", "latest", "Backup ID or latest")
-        destDir := fs.String("dest", "", "Destination directory")
-        filePath := fs.String("file", "", "Single file to restore")
-
-        if err := fs.Parse(args[1:]); err != nil {
-            return err
-        }
-
-        cfg, root, _, err := loadConfigWithRuntime(*configPath)
-        if err != nil {
-            return err
-        }
-
-        if *destDir == "" {
-            *destDir = cfg.Backup.Source
-        }
-
-        svc, err := backup.New(cfg, root)
-        if err != nil {
-            return err
-        }
-
-        ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-        defer cancel()
-
-        return svc.Restore(
-            ctx,
-            *backupID,
-            *destDir,
-            strings.TrimPrefix(filepath.ToSlash(*filePath), "./"),
-        )
-
-    default:
-        return fmt.Errorf("unknown backup command %q", args[0])
     }
+
+    return nil
 }
 
 func secretsCmd(args []string) error {
-    if len(args) == 0 {
-        return fmt.Errorf("secrets subcommand required")
-    }
-
-    switch args[0] {
-
-    case "encrypt":
-        fs := flag.NewFlagSet("secrets encrypt", flag.ContinueOnError)
-        in := fs.String("in", "", "Input file")
-        out := fs.String("out", "", "Output file")
-        pub := fs.String("pub", "", "Public key path")
-
-        if err := fs.Parse(args[1:]); err != nil {
-            return err
-        }
-
-        if *in == "" || *pub == "" {
-            return fmt.Errorf("--in and --pub are required")
-        }
-
-        return crypto.EncryptFile(*in, *out, *pub)
-
-    case "decrypt":
-        fs := flag.NewFlagSet("secrets decrypt", flag.ContinueOnError)
-        in := fs.String("in", "", "Input file")
-        out := fs.String("out", "", "Output file")
-        key := fs.String("key", crypto.DefaultPrivateKeyPath(), "Private key path")
-
-        if err := fs.Parse(args[1:]); err != nil {
-            return err
-        }
-
-        if *in == "" {
-            return fmt.Errorf("--in is required")
-        }
-
-        return crypto.DecryptFile(*in, *out, *key)
-
-    default:
-        return fmt.Errorf("unknown secrets command %q", args[0])
-    }
+    return fmt.Errorf("not implemented")
 }
 
 func agentCmd(args []string) error {
-    if len(args) == 0 {
-        return fmt.Errorf("agent command required")
-    }
-
-    switch args[0] {
-
-    case "start":
-        return agent.Start(context.Background())
-
-    case "render":
-        fs := flag.NewFlagSet("agent render", flag.ContinueOnError)
-        platform := fs.String("platform", "linux", "linux, macos, or windows")
-
-        if err := fs.Parse(args[1:]); err != nil {
-            return err
-        }
-
-        exe, _ := os.Executable()
-
-        switch *platform {
-
-        case "linux":
-            fmt.Printf(`[Unit]
-Description=porta auto runner
-
-[Service]
-Type=simple
-ExecStart=%s agent start
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-`, exe)
-
-        case "macos":
-            fmt.Printf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.porta.agent</string>
-  <key>ProgramArguments</key>
-  <array><string>%s</string><string>agent</string><string>start</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-</dict></plist>
-`, exe)
-
-        case "windows":
-            fmt.Printf(`# Windows Task Scheduler example
-# Program: %s
-# Arguments: agent start
-`, exe)
-
-        default:
-            return fmt.Errorf("invalid platform %q", *platform)
-        }
-
-        return nil
-
-    default:
-        return fmt.Errorf("unknown agent command %q", args[0])
-    }
+    return agent.Start(context.Background())
 }
