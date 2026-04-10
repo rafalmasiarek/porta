@@ -44,14 +44,14 @@ jobs:
           sha256sum porta-linux-amd64 > SHA256SUMS.txt
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.out }}
           path: ${{ matrix.out }}
 
       - name: Upload checksum artifact
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: porta-checksums
           path: SHA256SUMS.txt
@@ -96,7 +96,7 @@ jobs:
             --output json > sanityctl-report.json
 
       - name: Upload sanity report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sanityctl-report
           path: sanityctl-report.json
