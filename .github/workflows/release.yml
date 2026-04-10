@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download linux binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: porta-linux-amd64
           path: dist
@@ -107,25 +107,25 @@ jobs:
 
     steps:
       - name: Download linux artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: porta-linux-amd64
           path: release
 
       - name: Download darwin artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: porta-darwin-amd64
           path: release
 
       - name: Download windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: porta-windows-amd64.exe
           path: release
 
       - name: Download sanity report artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sanityctl-report
           path: release
