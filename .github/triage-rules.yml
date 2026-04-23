@@ -6,6 +6,65 @@ defaults:
   comment_marker_prefix: triage-bot
 
 rules:
+  - name: welcome-new-non-dependency-issues
+    enabled: true
+    on:
+      - issues.opened
+    if:
+      type: issue
+      labels_none:
+        - dependencies
+    then:
+      assign: ['@repo_owner']
+      comment_once_key: welcome-issue
+      comment: |
+        Thanks for opening this issue, @{author} 👋
+
+        @{assignees} has been assigned and will take a look as soon as possible.
+    stop: false
+
+  - name: classify-bug-issues-by-title
+    enabled: true
+    on:
+      - issues.opened
+      - issues.edited
+    if:
+      type: issue
+      title_matches: '/bug|error|exception|fail/i'
+    then:
+      add_labels: [bug, triaged]
+      comment_once_key: bug-routed
+    stop: false
+
+  - name: ask-for-labels-on-unlabeled-issues
+    enabled: true
+    on:
+      - issues.opened
+    if:
+      type: issue
+      label_missing: true
+    then:
+      comment_once_key: missing-labels
+      comment: |
+        Please add one or more labels so we can triage this issue faster.
+    stop: false
+
+  - name: thank-for-adding-labels
+    enabled: true
+    on:
+      - issues.labeled
+    if:
+      type: issue
+      labels_none:
+        - dependencies
+    then:
+      comment_once_key: thanks-for-labeling
+      comment: |
+        Thanks for adding labels, @{author} 🙌
+
+        This helps us triage the issue faster.
+    stop: false
+
   - name: assign-all-issues
     enabled: true
     on:
@@ -39,6 +98,11 @@ rules:
       type: pull_request
     then:
       request_reviewers: ['@repo_owner']
+      comment_once_key: pr-review-requested
+      comment: |
+        Thanks for opening this pull request, @{author} 👋
+
+        Review has been requested from @{requested_reviewers}. We will take a look as soon as possible.
     stop: true
 
   - name: remind-inactive-items
