@@ -5,12 +5,6 @@ defaults:
   inactivity_days: 30
   comment_marker_prefix: triage-bot
 
-#aliases:
-#  repo_owner:
-#    type: users
-#    users:
-#      - rafalmasiarek
-
 rules:
   - name: assign-all-issues
     enabled: true
@@ -22,11 +16,12 @@ rules:
       - issues.reopened
       - issues.assigned
       - issues.unassigned
+      - schedule.daily
     if:
       type: issue
     then:
       assign: ['@repo_owner']
-#    stop: true
+    stop: true
 
   - name: review-all-prs
     enabled: true
@@ -39,11 +34,12 @@ rules:
       - pull_request.converted_to_draft
       - pull_request.labeled
       - pull_request.unlabeled
+      - schedule.daily
     if:
       type: pull_request
     then:
       request_reviewers: ['@repo_owner']
-#    stop: true
+    stop: true
 
   - name: remind-inactive-items
     enabled: true
